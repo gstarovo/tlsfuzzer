@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - master
+      - test_extension_01
   pull_request:
 jobs:
   test:
