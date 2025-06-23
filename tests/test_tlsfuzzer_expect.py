@@ -3248,6 +3248,43 @@ class TestExpectCertificateVerify(unittest.TestCase):
 
         self.assertIn("verification failed", str(exc.exception))
 
+    def test_process_with_delegated_credential(self):
+        exp = ExpectCertificateVerify()
+
+        state = ConnectionState()
+        state.cipher = CipherSuite.TLS_AES_128_GCM_SHA256
+        state.version = (3, 4)
+
+        cert = Certificate(CertificateType.x509, (3, 4)).create(
+            X509CertChain([X509().parse(srv_raw_ed448_certificate)]))
+
+        private_key = parsePEMKey(srv_raw_ed448_key, private=True)
+
+        client_hello = ClientHello()
+        ext = SignatureAlgorithmsExtension().\
+            create([SignatureScheme.ed448])
+        # add extension here
+
+        client_hello.extensions = [ext]
+        state.handshake_messages.append(client_hello)
+
+        state.handshake_messages.append(cert)
+        # create delegated credential
+
+        hh_digest = state.handshake_hashes.digest('sha256')
+        self.assertEqual(state.prf_name, "sha256")
+        signature_context = bytearray(b'\x20' * 64 +
+                                      b'TLS 1.3, server CertificateVerify' +
+                                      b'\x00') + hh_digest
+        sig = private_key.hashAndSign(signature_context,
+                                      None,
+                                      None,
+                                      None)
+        scheme = SignatureScheme.ed448
+        cer_verify = CertificateVerify((3, 4)).create(sig, scheme)
+
+        exp.process(state, cer_verify)
+
 
 class TestExpectCertificateStatus(unittest.TestCase):
     def test___init__(self):
