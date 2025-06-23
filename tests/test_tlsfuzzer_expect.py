@@ -3,6 +3,9 @@
 
 from __future__ import print_function
 
+from tlslite.utils.pem import dePem
+from tlslite.x509 import Credential, DelegatedCredential
+
 try:
     import unittest2 as unittest
 except ImportError:
@@ -38,7 +41,8 @@ from tlslite.constants import ContentType, HandshakeType, ExtensionType, \
         AlertLevel, AlertDescription, ClientCertificateType, HashAlgorithm, \
         SignatureAlgorithm, CipherSuite, CertificateType, SSL2HandshakeType, \
         SSL2ErrorDescription, GroupName, CertificateStatusType, ECPointFormat,\
-        SignatureScheme, TLS_1_3_HRR, HeartbeatMode, \
+        SignatureScheme, TLS_1_3_HRR, TLS_1_3_BRAINPOOL_SIG_SCHEMES, \
+        HeartbeatMode, \
         TLS_1_1_DOWNGRADE_SENTINEL, TLS_1_2_DOWNGRADE_SENTINEL, \
         HeartbeatMessageType, KeyUpdateMessageType, \
         CertificateCompressionAlgorithm
@@ -48,7 +52,7 @@ from tlslite.messages import Message, ServerHello, CertificateRequest, \
         Finished, EncryptedExtensions, NewSessionTicket, Heartbeat, \
         KeyUpdate, HelloRequest, ServerHelloDone, NewSessionTicket1_0, \
         CompressedCertificate
-from tlslite.extensions import SNIExtension, TLSExtension, \
+from tlslite.extensions import DelegatedCredentialCertExtension, DelegatedCredentialExtension, SNIExtension, TLSExtension, \
         SupportedGroupsExtension, ALPNExtension, ECPointFormatsExtension, \
         NPNExtension, ServerKeyShareExtension, ClientKeyShareExtension, \
         SrvSupportedVersionsExtension, SupportedVersionsExtension, \
@@ -57,10 +61,16 @@ from tlslite.extensions import SNIExtension, TLSExtension, \
         HeartbeatExtension, StatusRequestExtension, \
         CompressedCertificateExtension
 from tlslite.utils.keyfactory import parsePEMKey
+from tlslite.utils.rsakey import RSAKey
+from tlslite.utils.ecdsakey import ECDSAKey
+from tlslite.utils.eddsakey import EdDSAKey
+from tlslite.utils.ecc import curve_name_to_hash_name
+from tlslite.utils import tlshashlib as hashlib
 from tlslite.x509certchain import X509CertChain, X509
 from tlslite.extensions import SNIExtension, SignatureAlgorithmsExtension
 from tlslite.keyexchange import DHE_RSAKeyExchange, ECDHE_RSAKeyExchange
-from tlslite.errors import TLSIllegalParameterException, TLSDecryptionFailed
+from tlslite.errors import TLSIllegalParameterException, TLSDecryptionFailed, \
+        TLSUnexpectedMessage
 from tlsfuzzer.runner import ConnectionState
 from tlslite.extensions import RenegotiationInfoExtension, \
         RecordSizeLimitExtension
@@ -867,6 +877,19 @@ srv_raw_mldsa87_key = str(
     "-----END PRIVATE KEY-----\n"
     )
 
+
+srv_raw_ed25519_dc_key = str(
+    "-----BEGIN PRIVATE KEY-----\n"
+    "MC4CAQAwBQYDK2VwBCIEIFajH10bzWhDcoBJrsW6jiYo3ylXsRgFU5+D7r7tEQYq\n"
+    "-----END PRIVATE KEY-----\n"
+    )
+
+
+srv_raw_ed25519_dc_pub = str(
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MCowBQYDK2VwAyEAL6CqmAUFNuo83QD2RX226fO2aDAkAuWFJCKuy+b41Xk=\n"
+    "-----END PUBLIC KEY-----\n"
+)
 
 class TestExpect(unittest.TestCase):
     def test___init__(self):
@@ -3248,6 +3271,302 @@ class TestExpectCertificateVerify(unittest.TestCase):
 
         self.assertIn("verification failed", str(exc.exception))
 
+class TestExpectCertificateVerifyWithDelegatedCredential(unittest.TestCase):
+    def create_delegated_credential(
+        self,
+        cert,
+        private_key,
+        dc_pub_byte,
+        dc_sig_scheme=None,
+        valid_time=0,
+    ):
+        cert_type = cert.certificate_list[0].certificate.certAlg
+        if cert_type == "Ed25519" or cert_type == "Ed448":
+            cert_type = cert_type.lower()
+            sig_alg = getattr(SignatureScheme, cert_type)
+        elif cert_type == "ecdsa":
+            cert_key_curve = private_key.curve_name
+            if "BRAINPOOL" in cert_key_curve:
+                if cert_key_curve == "BRAINPOOLP256r1":
+                    sig_alg = SignatureScheme.ecdsa_brainpoolP256r1tls13_sha256
+                elif cert_key_curve == "BRAINPOOLP384r1":
+                    sig_alg = SignatureScheme.ecdsa_brainpoolP384r1tls13_sha384
+                else:
+                    assert cert_key_curve == "BRAINPOOLP512r1"
+                    sig_alg = SignatureScheme.ecdsa_brainpoolP512r1tls13_sha512
+            else:
+                hash_name = getattr(HashAlgorithm,
+                                    curve_name_to_hash_name(cert_key_curve))
+                sig_alg = (hash_name, SignatureAlgorithm.ecdsa)
+        elif cert_type == "dsa":
+            sig_alg = SignatureScheme.dsa_sha256
+        elif cert_type in ("rsa", "rsa-pss"):
+            sig_alg = SignatureScheme.rsa_pss_pss_sha256
+        else:
+            raise ValueError("Unsupported certificate algorithm: {0}"
+                             .format(cert_type))
+
+        scheme = SignatureScheme.toRepr(sig_alg)
+        cred = Credential(subject_public_key_info=dc_pub_byte)
+        cred.parse_pub_key()
+        dc_pub = cred.pub_key
+
+        if not dc_sig_scheme:
+            if isinstance(dc_pub, RSAKey):
+                dc_sig_scheme = SignatureScheme.rsa_pss_pss_sha256
+            elif isinstance(dc_pub, ECDSAKey):
+                curve = dc_pub.curve_name
+                if "BRAINPOOL" in curve:
+                    if curve == "BRAINPOOLP256r1":
+                        dc_sig_scheme = SignatureScheme.ecdsa_brainpoolP256r1tls13_sha256
+                    elif curve == "BRAINPOOLP384r1":
+                        dc_sig_scheme = SignatureScheme.ecdsa_brainpoolP384r1tls13_sha384
+                    else:
+                        assert curve == "BRAINPOOLP512r1"
+                        dc_sig_scheme = SignatureScheme.ecdsa_brainpoolP512r1tls13_sha512
+                else:
+                    hash_name = getattr(HashAlgorithm,
+                                        curve_name_to_hash_name(curve))
+                    dc_sig_scheme = (hash_name, SignatureAlgorithm.ecdsa)
+            elif isinstance(dc_pub, EdDSAKey):
+                curve = (dc_pub.curve_name).lower()
+                dc_sig_scheme = getattr(SignatureScheme, curve)
+
+        cert_bytes = cert.certificate_list[0].certificate.bytes
+        cred_raw_bytes = Credential.marshal(valid_time,
+                                            dc_sig_scheme,
+                                            dc_pub_byte)
+        cred = Credential(valid_time=valid_time,
+                          dc_cert_verify_algorithm=dc_sig_scheme,
+                          subject_public_key_info=dc_pub_byte,
+                          bytes=cred_raw_bytes)
+
+        bytes_to_sign = DelegatedCredential.compute_certificate_dc_sig_context(
+            cert_bytes,
+            cred.bytes,
+            sig_alg)
+
+        if sig_alg in (SignatureScheme.ed25519, SignatureScheme.ed448):
+            hashName = "intrinsic"
+            padType = None
+            saltLen = None
+            sig_func = private_key.hashAndSign
+            ver_func = private_key.hashAndVerify
+        elif isinstance(sig_alg, tuple) and sig_alg[1] == SignatureAlgorithm.ecdsa:
+            hashName = HashAlgorithm.toRepr(sig_alg[0])
+            padType = None
+            saltLen = None
+            sig_func = private_key.hashAndSign
+            ver_func = private_key.hashAndVerify
+        elif sig_alg in TLS_1_3_BRAINPOOL_SIG_SCHEMES:
+            hashName = SignatureScheme.getHash(scheme)
+            padType = None
+            saltLen = None
+            sig_func = private_key.hashAndSign
+            ver_func = private_key.hashAndVerify
+        else:
+            padType = SignatureScheme.getPadding(scheme)
+            hashName = SignatureScheme.getHash(scheme)
+            saltLen = getattr(hashlib, hashName)().digest_size
+            sig_func = private_key.hashAndSign
+            ver_func = private_key.hashAndVerify
+
+        signature = sig_func(bytes_to_sign,
+                             padType,
+                             hashName,
+                             saltLen)
+        if not ver_func(signature, bytes_to_sign,
+                        padType,
+                        hashName,
+                        saltLen):
+            raise ValueError("Delegated Credential signature failed")
+        delegated_credential = DelegatedCredential(
+            cred=cred,
+            algorithm=sig_alg,
+            signature=signature
+        )
+        del_cred_ext = DelegatedCredentialCertExtension().create(delegated_credential)
+        cert.certificate_list[0].extensions.append(del_cred_ext)
+        return cert
+
+    def _build_state(self):
+        state = ConnectionState()
+        state.cipher = CipherSuite.TLS_AES_128_GCM_SHA256
+        state.version = (3, 4)
+        return state
+
+    def test_process_with_delegated_credential_ed25519_cert(self):
+        exp = ExpectCertificateVerify()
+
+        state = self._build_state()
+
+        cert = Certificate(CertificateType.x509, (3, 4)).create(
+            X509CertChain([X509().parse(srv_raw_ed25519_certificate)]))
+        private_key = parsePEMKey(srv_raw_ed25519_key, private=True)
+        dc_private_key = parsePEMKey(srv_raw_ed25519_dc_key, private=True)
+        dc_pub_byte = dePem(srv_raw_ed25519_dc_pub, "PUBLIC KEY")
+
+        cert = self.create_delegated_credential(
+            cert,
+            private_key,
+            dc_pub_byte,
+        )
+
+        client_hello = ClientHello()
+        ext = SignatureAlgorithmsExtension().create([SignatureScheme.ed25519])
+        client_hello.extensions = [ext]
+        client_hello.extensions.append(
+            DelegatedCredentialExtension().create([SignatureScheme.ed25519]))
+        state.handshake_messages.append(client_hello)
+        state.handshake_messages.append(cert)
+
+        hh_digest = state.handshake_hashes.digest('sha256')
+        self.assertEqual(state.prf_name, "sha256")
+        signature_context = bytearray(b'\x20' * 64 +
+                                      b'TLS 1.3, server CertificateVerify' +
+                                      b'\x00') + hh_digest
+        sig = dc_private_key.hashAndSign(
+            signature_context,
+            None,
+            None,
+            None
+        )
+        scheme = SignatureScheme.ed25519
+        cer_verify = CertificateVerify((3, 4)).create(sig, scheme)
+
+        exp.process(state, cer_verify)
+
+    def test_process_with_delegated_credential_ed448_cert(self):
+        exp = ExpectCertificateVerify()
+
+        state = self._build_state()
+
+
+        cert = Certificate(CertificateType.x509, (3, 4)).create(
+            X509CertChain([X509().parse(srv_raw_ed448_certificate)]))
+        private_key = parsePEMKey(srv_raw_ed448_key, private=True)
+        dc_private_key = parsePEMKey(srv_raw_ed25519_dc_key, private=True)
+        dc_pub_byte = dePem(srv_raw_ed25519_dc_pub, "PUBLIC KEY")
+
+        cert = self.create_delegated_credential(
+            cert,
+            private_key,
+            dc_pub_byte,
+        )
+
+        client_hello = ClientHello()
+        ext = SignatureAlgorithmsExtension().create([SignatureScheme.ed448])
+        client_hello.extensions = [ext]
+        client_hello.extensions.append(
+            DelegatedCredentialExtension().create([SignatureScheme.ed25519]))
+        state.handshake_messages.append(client_hello)
+        state.handshake_messages.append(cert)
+
+        hh_digest = state.handshake_hashes.digest('sha256')
+        self.assertEqual(state.prf_name, "sha256")
+        signature_context = bytearray(b'\x20' * 64 +
+                                      b'TLS 1.3, server CertificateVerify' +
+                                      b'\x00') + hh_digest
+        sig = dc_private_key.hashAndSign(
+            signature_context,
+            None,
+            None,
+            None
+        )
+        scheme = SignatureScheme.ed25519
+        cer_verify = CertificateVerify((3, 4)).create(sig, scheme)
+
+        exp.process(state, cer_verify)
+
+    def test_process_with_duplicate_delegated_credentials(self):
+        exp = ExpectCertificateVerify()
+
+        state = self._build_state()
+
+        cert = Certificate(CertificateType.x509, (3, 4)).create(
+            X509CertChain([X509().parse(srv_raw_ed25519_certificate)]))
+        private_key = parsePEMKey(srv_raw_ed25519_key, private=True)
+        dc_private_key = parsePEMKey(srv_raw_ed25519_dc_key, private=True)
+        dc_pub_byte = dePem(srv_raw_ed25519_dc_pub, "PUBLIC KEY")
+
+        cert = self.create_delegated_credential(
+            cert,
+            private_key,
+            dc_pub_byte,
+        )
+        del_cred_ext = cert.certificate_list[0].extensions[-1]
+        cert.certificate_list[0].extensions.append(del_cred_ext)
+
+        client_hello = ClientHello()
+        ext = SignatureAlgorithmsExtension().create([SignatureScheme.ed25519])
+        client_hello.extensions = [ext]
+        client_hello.extensions.append(
+            DelegatedCredentialExtension().create([SignatureScheme.ed25519]))
+        state.handshake_messages.append(client_hello)
+        state.handshake_messages.append(cert)
+
+        hh_digest = state.handshake_hashes.digest('sha256')
+        self.assertEqual(state.prf_name, "sha256")
+        signature_context = bytearray(b'\x20' * 64 +
+                                      b'TLS 1.3, server CertificateVerify' +
+                                      b'\x00') + hh_digest
+        sig = dc_private_key.hashAndSign(
+            signature_context,
+            None,
+            None,
+            None
+        )
+        scheme = SignatureScheme.ed25519
+        cer_verify = CertificateVerify((3, 4)).create(sig, scheme)
+
+        with self.assertRaises(TLSIllegalParameterException) as exc:
+            exp.process(state, cer_verify)
+
+        self.assertIn("multiple delegated credentials extensions",
+                      str(exc.exception))
+
+    def test_process_with_delegated_credential_client_unsupported(self):
+        exp = ExpectCertificateVerify()
+
+        state = self._build_state()
+
+        # Base certificate and keys
+        cert = Certificate(CertificateType.x509, (3, 4)).create(
+            X509CertChain([X509().parse(srv_raw_ed25519_certificate)]))
+        private_key = parsePEMKey(srv_raw_ed25519_key, private=True)
+        dc_private_key = parsePEMKey(srv_raw_ed25519_dc_key, private=True)
+        dc_pub_byte = dePem(srv_raw_ed25519_dc_pub, "PUBLIC KEY")
+
+        cert = self.create_delegated_credential(
+            cert,
+            private_key,
+            dc_pub_byte,
+        )
+
+        client_hello = ClientHello()
+        ext = SignatureAlgorithmsExtension().create([SignatureScheme.ed25519])
+        client_hello.extensions = [ext]
+        state.handshake_messages.append(client_hello)
+        state.handshake_messages.append(cert)
+
+        hh_digest = state.handshake_hashes.digest('sha256')
+        self.assertEqual(state.prf_name, "sha256")
+        signature_context = bytearray(b'\x20' * 64 +
+                                      b'TLS 1.3, server CertificateVerify' +
+                                      b'\x00') + hh_digest
+        sig = dc_private_key.hashAndSign(
+            signature_context,
+            None,
+            None,
+            None
+        )
+        scheme = SignatureScheme.ed25519
+        cer_verify = CertificateVerify((3, 4)).create(sig, scheme)
+
+        with self.assertRaises(TLSUnexpectedMessage) as exc:
+            exp.process(state, cer_verify)
+
+        self.assertIn("client does not support it", str(exc.exception))
 
 class TestExpectCertificateStatus(unittest.TestCase):
     def test___init__(self):
