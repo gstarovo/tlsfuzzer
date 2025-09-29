@@ -707,7 +707,7 @@
           "arguments": ["-x", "ed448 only",
                         "-X", "handshake_failure"]},
          {"name": "test-tls13-delegated-credential.py",
-          "arguments": ["--dc-sig-alg", "ed2551"]}
+          "arguments": ["--dc-sig-alg", "ed25519"]}
      ]
     },
     {"server_command": ["{python}", "-u", "{command}", "server",
