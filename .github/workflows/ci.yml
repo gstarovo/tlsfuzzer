@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - master
+      - del-cred-test
   pull_request:
 jobs:
   test:
