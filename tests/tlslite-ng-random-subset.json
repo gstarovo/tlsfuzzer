@@ -669,7 +669,7 @@
          {"name": "test-tls13-lengths.py",
           "arguments": ["-p", "4434", "-n", "200"]},
          {"name": "test-tls13-delegated-credential.py",
-          "arguments": ["--dc-sig-alg", "ecdsa_secp256r1_sha256"]}
+          "arguments": ["-p", "4434", "--dc-sig-alg", "ecdsa_secp256r1_sha256"]}
      ]
     },
     {"server_command": ["{python}", "-u", "{command}", "server",
