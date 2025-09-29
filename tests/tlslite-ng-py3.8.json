@@ -533,6 +533,8 @@
     {"server_command": ["{python}", "-u", "{command}", "server",
                  "-k", "tests/serverRSAPSSKey.pem",
                  "-c", "tests/serverRSAPSSCert.pem",
+                 "--dc-key", "tests/serverDelCredRSAPSSKey.pem",
+                 "--dc-pub", "tests/serverDelCredRSAPSSPub.pem",
                  "localhost:4433"],
      "server_hostname": "localhost",
      "server_port": 4433,
@@ -544,7 +546,9 @@
          "arguments" : ["-x", "rsa_pss_rsae_sha256 only",
                         "-x", "rsa_pss_rsae_sha384 only",
                         "-x", "rsa_pss_rsae_sha512 only"]
-        }
+        },
+        {"name": "test-tls13-delegated-credential.py",
+         "arguments": ["--dc-sig-alg", "rsa_pss_pss_sha256"]}
      ]
     },
     {"server_command": ["{python}", "-u", "{command}", "server",
@@ -738,16 +742,12 @@
                 "-c", "tests/serverBrainpoolP256r1ECCert.pem",
                 "--groups",
                 "brainpoolP256r1tls13,brainpoolP384r1tls13,brainpoolP512r1tls13,x25519",
-                "dc-key", "tests/serverDelCredRSAPSSKey.pem",
-                "dc-pub", "tests/serverDelCredRSAPSSPub.pem",
                 "localhost:4433"],
      "server_hostname": "localhost",
      "server_port": 4433,
      "environment": {"PYTHONPATH": "."},
      "tests" : [
-         {"name": "test-tls13-ecdhe-brainpool-curves.py"},
-         {"name": "test-tls13-delegated-credential.py",
-          "arguments": ["--dc-sig-alg", "rsa_pss_pss_sha256"]}
+         {"name": "test-tls13-ecdhe-brainpool-curves.py"}
      ]
     },
     {"server_command": ["{python}", "-u", "{command}", "server",
