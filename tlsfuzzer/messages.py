@@ -5,6 +5,7 @@
 
 import random
 import struct
+from ecdsa.util import sigdecode_der_full_r, sigencode_der, sigencode_der_full_r
 from tlslite.messages import ClientHello, ClientKeyExchange, ChangeCipherSpec,\
         Finished, Alert, ApplicationData, Message, Certificate, \
         CertificateVerify, CertificateRequest, ClientMasterKey, \
@@ -14,6 +15,7 @@ from tlslite.constants import AlertLevel, AlertDescription, ContentType, \
         ExtensionType, CertificateType, HashAlgorithm, \
         SignatureAlgorithm, CipherSuite, SignatureScheme, TLS_1_3_HRR, \
         HeartbeatMessageType, CertificateCompressionAlgorithm, GroupName
+from tlslite.utils.compat import compatHMAC
 import tlslite.utils.tlshashlib as hashlib
 from tlslite.extensions import TLSExtension, RenegotiationInfoExtension, \
         ClientKeyShareExtension, StatusRequestExtension
@@ -38,6 +40,7 @@ import socket
 from functools import partial
 from ecdsa import VerifyingKey
 from tlslite.utils import ecc
+from tlslite.utils import tlshashlib
 
 class Command(TreeNode):
     """Command objects."""
@@ -1167,7 +1170,7 @@ class CertificateVerifyGenerator(HandshakeProtocolMessageGenerator):
     def __init__(self, private_key=None, msg_version=None, msg_alg=None,
                  sig_version=None, sig_alg=None, signature=None,
                  rsa_pss_salt_len=None, padding_xors=None, padding_subs=None,
-                 mgf1_hash=None, context=None, sig_func=None):
+                 mgf1_hash=None, context=None, sig_encode=None):
         """Create object for generating Certificate Verify messages."""
         super(CertificateVerifyGenerator, self).__init__()
         self.private_key = private_key
@@ -1183,7 +1186,7 @@ class CertificateVerifyGenerator(HandshakeProtocolMessageGenerator):
         self.padding_subs = padding_subs
         self.mgf1_hash = mgf1_hash
         self.context = context
-        self.sig_func = sig_func
+        self.sig_encode  = sig_encode
 
     @staticmethod
     def _sig_alg_for_rsa_key(key_alg, accept_sig_algs, version):
@@ -1502,10 +1505,19 @@ class CertificateVerifyGenerator(HandshakeProtocolMessageGenerator):
             sig_func = self.sig_func
 
         try:
-            signature = sig_func(verify_bytes,
-                                 padding,
-                                 self.mgf1_hash,
-                                 self.rsa_pss_salt_len)
+            if self.sig_encode is not None:
+                func = getattr(tlshashlib, self.mgf1_hash)
+                signature = self.private_key.private_key.sign_digest_deterministic(compatHMAC(verify_bytes),
+                                                        hashfunc=func,
+                                                        sigencode=sigencode_der_full_r, accelerate=True)
+                r, s = sigdecode_der_full_r(signature, None)
+                print(r)
+            else:
+                signature = sig_func(verify_bytes,
+                                    padding,
+                                    self.mgf1_hash,
+                                    self.rsa_pss_salt_len)
+
         finally:
             # make sure the changes are undone even if the signing fails
             self.private_key._raw_private_key_op_bytes = old_private_key_op
