@@ -11,6 +11,8 @@ from tlslite.constants import HashAlgorithm, SignatureAlgorithm, \
 from tlslite.extensions import KeyShareEntry, PreSharedKeyExtension, \
         PskIdentity, ClientKeyShareExtension, SessionTicketExtension
 from tlslite.handshakehelpers import HandshakeHelpers
+from tlslite.utils import tlshashlib
+from tlslite.utils.compat import compatHMAC
 from .handshake_helpers import kex_for_group
 from tlslite.utils.cryptomath import getRandomBytes
 
@@ -626,3 +628,53 @@ def pad_or_truncate_signature(sig_method, modify, pad_byte=None):
 
     return lambda a, b, c, d: bytearray(sig_method(a, b, c, d))[:modify]
 
+
+def change_der_encoding_syntax_ecdsa_sig(sig_method, sig_encode,
+                                         accelerate=False, encoding=None,
+                                         a_param=None):
+    """
+    Wrap the ECDSA signature method and adjust the signature DER encoding.
+    Allows to encode the signature in on of the two :term:`ASN.1` structures::
+
+        ECDSA-Sig-Value ::= SEQUENCE {
+            r INTEGER,
+            s INTEGER,
+            a INTEGER OPTIONAL,
+            y CHOICE { b BOOLEAN, f FieldElement } OPTIONAL
+        }
+        ECDSA-Full-R ::= SEQUENCE {
+            r ECPoint,
+            s INTEGER
+        }
+
+    :param callable sig_method: sign_digest_deterministic method of a private
+        key object
+    :param callable sig_encode: the method to use for encoding
+    :param boolean accelerate: indicates what type of `r` should be returned
+        for future encoding needs. True for ECPoint, False for int.
+        Needed for :func:`ecdsa.util.sigencode_der_sig_value_y_field_elem`,
+        :func:`ecdsa.util.sigencode_der_sig_value_y_boolean`,
+        :func:`ecdsa.util.sigencode_der_full_r`
+    :param str encoding: encoding of ECPoint in ECDSA-Full-R.
+        Acceptable values: raw (default), compressed, uncompressed.
+        Used in :func:`ecdsa.util.sigencode_der_full_r`.
+    :param int a_param: the value to be encoded an `a` in ECDSA-Sig-Value.
+        Since binary curves are not supported now, this encoding is used only
+        for testing purposes.
+        Used in :func:`ecdsa.util.sigencode_der_sig_value_a`
+    :return: callable
+    """
+    if encoding:
+        return lambda a, b, c, d: sig_method(digest=compatHMAC(a),
+                                            hashfunc=getattr(tlshashlib, c),
+                                            sigencode=lambda x, y, z:  sig_encode(x, y, z, encoding),
+                                            accelerate=accelerate)
+    if a_param:
+        return lambda a, b, c, d: sig_method(digest=compatHMAC(a),
+                                            hashfunc=getattr(tlshashlib, c),
+                                            sigencode=lambda x, y, z:  sig_encode(x, y, z, a_param),
+                                            accelerate=accelerate)
+    return lambda a, b, c, d: sig_method(digest=compatHMAC(a),
+                                            hashfunc=getattr(tlshashlib, c),
+                                            sigencode=sig_encode,
+                                            accelerate=accelerate)

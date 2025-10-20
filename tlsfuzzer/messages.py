@@ -1170,7 +1170,7 @@ class CertificateVerifyGenerator(HandshakeProtocolMessageGenerator):
     def __init__(self, private_key=None, msg_version=None, msg_alg=None,
                  sig_version=None, sig_alg=None, signature=None,
                  rsa_pss_salt_len=None, padding_xors=None, padding_subs=None,
-                 mgf1_hash=None, context=None, sig_encode=None):
+                 mgf1_hash=None, context=None, sig_func=None):
         """Create object for generating Certificate Verify messages."""
         super(CertificateVerifyGenerator, self).__init__()
         self.private_key = private_key
@@ -1186,7 +1186,7 @@ class CertificateVerifyGenerator(HandshakeProtocolMessageGenerator):
         self.padding_subs = padding_subs
         self.mgf1_hash = mgf1_hash
         self.context = context
-        self.sig_encode  = sig_encode
+        self.sig_func = sig_func
 
     @staticmethod
     def _sig_alg_for_rsa_key(key_alg, accept_sig_algs, version):
@@ -1505,18 +1505,10 @@ class CertificateVerifyGenerator(HandshakeProtocolMessageGenerator):
             sig_func = self.sig_func
 
         try:
-            if self.sig_encode is not None:
-                func = getattr(tlshashlib, self.mgf1_hash)
-                signature = self.private_key.private_key.sign_digest_deterministic(compatHMAC(verify_bytes),
-                                                        hashfunc=func,
-                                                        sigencode=sigencode_der_full_r, accelerate=True)
-                r, s = sigdecode_der_full_r(signature, None)
-                print(r)
-            else:
-                signature = sig_func(verify_bytes,
-                                    padding,
-                                    self.mgf1_hash,
-                                    self.rsa_pss_salt_len)
+            signature = sig_func(verify_bytes,
+                                padding,
+                                self.mgf1_hash,
+                                self.rsa_pss_salt_len)
 
         finally:
             # make sure the changes are undone even if the signing fails
