@@ -60,6 +60,8 @@ def help_msg():
     print("                \"secp256r1:secp384r1:secp521r1\"")
     print(" --help         this message")
 
+# TODO document, that for parsing PEM, the python implementation is required, 
+# because we need the interface of the python key 
 
 def main():
     """check if obsolete signature algorithm is rejected by server"""
@@ -101,7 +103,7 @@ def main():
             text_key = open(arg, 'rb').read()
             if sys.version_info[0] >= 3:
                 text_key = str(text_key, 'utf-8')
-            private_key = parsePEMKey(text_key, private=True)
+            private_key = parsePEMKey(text_key, private=True, implementations=["python"])
         elif opt == '-c':
             text_cert = open(arg, 'rb').read()
             if sys.version_info[0] >= 3:
