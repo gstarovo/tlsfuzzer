@@ -13,16 +13,24 @@ except ImportError:
     from unittest.mock import call
 
 
+from ecdsa import util
+from ecdsa.keys import BadSignatureError
 from tlsfuzzer.helpers import sig_algs_to_ids, key_share_gen, psk_ext_gen, \
         flexible_getattr, psk_session_ext_gen, key_share_ext_gen, \
         uniqueness_check, AutoEmptyExtension, protocol_name_to_tuple, \
         client_cert_types_to_ids, ext_names_to_ids, expected_ext_parser, \
-        dict_update_non_present, pad_or_truncate_signature
+        dict_update_non_present, pad_or_truncate_signature, \
+        change_der_encoding_syntax_ecdsa_sig
 from tlsfuzzer.runner import ConnectionState
+from tlslite import constants
 from tlslite.extensions import KeyShareEntry, PreSharedKeyExtension, \
         PskIdentity, ClientKeyShareExtension
 from tlslite.constants import GroupName, CipherSuite
+from tlslite.keyexchange import KeyExchange
 from tlslite.messages import NewSessionTicket
+from tlslite.utils import tlshashlib
+from tlslite.utils.compat import compatHMAC
+from tlslite.utils.python_ecdsakey import Python_ECDSAKey
 
 class TestSigAlgsToIds(unittest.TestCase):
     def test_with_empty(self):
@@ -482,3 +490,167 @@ class TestPadOrTruncateSignature(unittest.TestCase):
             pad_or_truncate_signature(lambda a, b, c, d: b'xxx000', 1)
 
         self.assertIn("pad_byte unspecified", str(e.exception))
+
+
+class TestChangeDerEncodingSyntaxECDSASig(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.priv_key = Python_ECDSAKey(None, None, "NIST256p", 12)
+
+    def test_sigencode_der(self):
+        priv_key = self.priv_key
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        verify_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+        verify_bytes = verify_bytes[:self.priv_key.private_key.curve.baselen]
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der)
+        signature = sig_fun(verify_bytes, None, "sha256", None)
+        assert priv_key.public_key.verify_digest(compatHMAC(signature),
+                                                 compatHMAC(verify_bytes),
+                                                 util.sigdecode_der)
+
+
+    def test_sigencode_der_sig_value_y_field_elem(self):
+        priv_key = self.priv_key
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        verify_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+        verify_bytes = verify_bytes[:self.priv_key.private_key.curve.baselen]
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_sig_value_y_field_elem,
+                                                       accelerate=True)
+        signature = sig_fun(verify_bytes, None, "sha256", None)
+        assert priv_key.public_key.verify_digest(compatHMAC(signature),
+                                                 compatHMAC(verify_bytes),
+                                                 util.sigdecode_der_extended)
+
+    def test_sigencode_der_sig_value_y_boolean(self):
+        priv_key = self.priv_key
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        verify_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+        verify_bytes = verify_bytes[:self.priv_key.private_key.curve.baselen]
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_sig_value_y_boolean,
+                                                       accelerate=True)
+        signature = sig_fun(verify_bytes, None, "sha256", None)
+        assert priv_key.public_key.verify_digest(compatHMAC(signature),
+                                                 compatHMAC(verify_bytes),
+                                                 util.sigdecode_der_extended)
+
+    def test_sigencode_der_full_r_raw(self):
+        priv_key = self.priv_key
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        verify_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+        verify_bytes = verify_bytes[:self.priv_key.private_key.curve.baselen]
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_full_r,
+                                                       accelerate=True)
+        signature = sig_fun(verify_bytes, None, "sha256", None)
+        assert priv_key.public_key.verify_digest(compatHMAC(signature),
+                                                 compatHMAC(verify_bytes),
+                                                 util.sigdecode_der_extended)
+
+    def test_sigencode_der_full_r_uncompressed(self):
+        priv_key = self.priv_key
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        verify_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+        verify_bytes = verify_bytes[:self.priv_key.private_key.curve.baselen]
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_full_r,
+                                                       accelerate=True,
+                                                       encoding="uncompressed")
+        signature = sig_fun(verify_bytes, None, "sha256", None)
+        assert priv_key.public_key.verify_digest(compatHMAC(signature),
+                                                 compatHMAC(verify_bytes),
+                                                 util.sigdecode_der_extended)
+
+    def test_sigencode_der_full_r_compressed(self):
+        priv_key = self.priv_key
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        verify_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+        verify_bytes = verify_bytes[:self.priv_key.private_key.curve.baselen]
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_full_r,
+                                                       accelerate=True,
+                                                       encoding="compressed")
+        signature = sig_fun(verify_bytes, None, "sha256", None)
+        assert priv_key.public_key.verify_digest(compatHMAC(signature),
+                                                 compatHMAC(verify_bytes),
+                                                 util.sigdecode_der_extended)
+
+    def test_sigencode_der_sig_value_a(self):
+        priv_key = self.priv_key
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        verify_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+        verify_bytes = verify_bytes[:self.priv_key.private_key.curve.baselen]
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_sig_value_a,
+                                                       a_param=1)
+        signature = sig_fun(verify_bytes, None, "sha256", None)
+        with self.assertRaises(BadSignatureError) as e:
+            priv_key.public_key.verify_digest(compatHMAC(signature),
+                                                 compatHMAC(verify_bytes),
+                                                 util.sigdecode_der_extended)
+        self.assertIn("Only prime field curves are supported", str(e.exception))

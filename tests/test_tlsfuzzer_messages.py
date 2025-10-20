@@ -18,6 +18,7 @@ import os
 import io
 import struct
 
+from ecdsa.keys import BadSignatureError
 from tlsfuzzer.messages import ClientHelloGenerator, ClientKeyExchangeGenerator,\
         ChangeCipherSpecGenerator, FinishedGenerator, \
         RenegotiationInfoExtension, ResetHandshakeHashes, SetMaxRecordSize, \
@@ -34,7 +35,7 @@ from tlsfuzzer.messages import ClientHelloGenerator, ClientKeyExchangeGenerator,
         ResetWriteConnectionState, HeartbeatGenerator, Certificate, \
         KeyUpdateGenerator, ClearContext, RawSocketWriteGenerator, \
         CompressedCertificateGenerator
-from tlsfuzzer.helpers import psk_ext_gen, psk_ext_updater, \
+from tlsfuzzer.helpers import change_der_encoding_syntax_ecdsa_sig, psk_ext_gen, psk_ext_updater, \
         psk_session_ext_gen, AutoEmptyExtension
 from tlsfuzzer.runner import ConnectionState
 import tlslite.messages as messages
@@ -58,8 +59,8 @@ from tlslite.utils.python_eddsakey import Python_EdDSAKey
 from tlslite.utils.compression import compression_algo_impls
 from tlslite.x509 import X509
 from tlslite.x509certchain import X509CertChain
-from tlslite.utils.compat import ML_DSA_AVAILABLE
-from ecdsa import SigningKey, Ed25519
+from tlslite.utils.compat import ML_DSA_AVAILABLE, compatHMAC
+from ecdsa import SigningKey, Ed25519, util
 
 
 rsa_pss_cert = X509CertChain([X509().parse(
@@ -2536,6 +2537,199 @@ class TestCertificateVerifyGeneratorECDSA(unittest.TestCase):
         self.assertTrue(priv_key.verify(
             sig, secureHash(b"", "sha1"),
             "", "sha1"))
+
+    def test_generate_with_full_der_r_raw_encoding(self):
+        priv_key = self.priv_key
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_full_r,
+                                                       accelerate=True)
+        cert_ver_g = CertificateVerifyGenerator(priv_key, sig_func=sig_fun)
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        msg = cert_ver_g.generate(state)
+
+        self.assertIsNotNone(msg)
+        self.assertTrue(msg.signature)
+        self.assertEqual(msg.signatureAlgorithm,
+                         (constants.HashAlgorithm.sha256,
+                          constants.SignatureAlgorithm.ecdsa))
+
+        verif_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+
+        self.assertTrue(priv_key.public_key.verify_digest(
+            compatHMAC(msg.signature),
+            compatHMAC(verif_bytes),
+            util.sigdecode_der_extended))
+
+    def test_generate_with_full_der_r_compressed_encoding(self):
+        priv_key = self.priv_key
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_full_r,
+                                                       accelerate=True,
+                                                       encoding="compressed")
+        cert_ver_g = CertificateVerifyGenerator(priv_key, sig_func=sig_fun)
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        msg = cert_ver_g.generate(state)
+
+        self.assertIsNotNone(msg)
+        self.assertTrue(msg.signature)
+        self.assertEqual(msg.signatureAlgorithm,
+                         (constants.HashAlgorithm.sha256,
+                          constants.SignatureAlgorithm.ecdsa))
+
+        verif_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+
+        self.assertTrue(priv_key.public_key.verify_digest(
+            compatHMAC(msg.signature),
+            compatHMAC(verif_bytes),
+            util.sigdecode_der_extended))
+
+    def test_generate_with_full_der_r_uncompressed_encoding(self):
+        priv_key = self.priv_key
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_full_r,
+                                                       accelerate=True,
+                                                       encoding="uncompressed")
+        cert_ver_g = CertificateVerifyGenerator(priv_key, sig_func=sig_fun)
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        msg = cert_ver_g.generate(state)
+
+        self.assertIsNotNone(msg)
+        self.assertTrue(msg.signature)
+        self.assertEqual(msg.signatureAlgorithm,
+                         (constants.HashAlgorithm.sha256,
+                          constants.SignatureAlgorithm.ecdsa))
+
+        verif_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+
+        self.assertTrue(priv_key.public_key.verify_digest(
+            compatHMAC(msg.signature),
+            compatHMAC(verif_bytes),
+            util.sigdecode_der_extended))
+
+    def test_generate_with_full_der_sig_value_y_field_elem(self):
+        priv_key = self.priv_key
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_sig_value_y_field_elem,
+                                                       accelerate=True)
+        cert_ver_g = CertificateVerifyGenerator(priv_key, sig_func=sig_fun)
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        msg = cert_ver_g.generate(state)
+
+        self.assertIsNotNone(msg)
+        self.assertTrue(msg.signature)
+        self.assertEqual(msg.signatureAlgorithm,
+                         (constants.HashAlgorithm.sha256,
+                          constants.SignatureAlgorithm.ecdsa))
+
+        verif_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+
+        self.assertTrue(priv_key.public_key.verify_digest(
+            compatHMAC(msg.signature),
+            compatHMAC(verif_bytes),
+            util.sigdecode_der_extended))
+
+    def test_generate_with_full_der_sig_value_y_boolean(self):
+        priv_key = self.priv_key
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_sig_value_y_boolean,
+                                                       accelerate=True)
+        cert_ver_g = CertificateVerifyGenerator(priv_key, sig_func=sig_fun)
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        msg = cert_ver_g.generate(state)
+
+        self.assertIsNotNone(msg)
+        self.assertTrue(msg.signature)
+        self.assertEqual(msg.signatureAlgorithm,
+                         (constants.HashAlgorithm.sha256,
+                          constants.SignatureAlgorithm.ecdsa))
+
+        verif_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+
+        self.assertTrue(priv_key.public_key.verify_digest(
+            compatHMAC(msg.signature),
+            compatHMAC(verif_bytes),
+            util.sigdecode_der_extended))
+
+    def test_generate_with_full_der_sig_value_a(self):
+        priv_key = self.priv_key
+        sig_fun = change_der_encoding_syntax_ecdsa_sig(priv_key.private_key.sign_digest_deterministic,
+                                                       util.sigencode_der_sig_value_a,
+                                                       accelerate=False,
+                                                       a_param=1)
+        cert_ver_g = CertificateVerifyGenerator(priv_key, sig_func=sig_fun)
+        state = ConnectionState()
+        state.version = (3, 4)
+
+        msg = cert_ver_g.generate(state)
+
+        self.assertIsNotNone(msg)
+        self.assertTrue(msg.signature)
+        self.assertEqual(msg.signatureAlgorithm,
+                         (constants.HashAlgorithm.sha256,
+                          constants.SignatureAlgorithm.ecdsa))
+
+        verif_bytes = KeyExchange.calcVerifyBytes(
+                (3, 4),
+                state.handshake_hashes,
+                constants.SignatureScheme.ecdsa_secp256r1_sha256,
+                b'',
+                b'',
+                b'',
+                "sha256")
+
+        with self.assertRaises(BadSignatureError) as e:
+
+            self.assertRaises(priv_key.public_key.verify_digest(
+                compatHMAC(msg.signature),
+                compatHMAC(verif_bytes),
+                util.sigdecode_der_extended))
+        self.assertIn("Only prime field curves are supported", str(e.exception))
+
 
 class TestCertificateVerifyGeneratorEdDSA(unittest.TestCase):
     @classmethod

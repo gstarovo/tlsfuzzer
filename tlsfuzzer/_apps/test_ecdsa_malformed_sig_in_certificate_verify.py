@@ -9,28 +9,61 @@ import getopt
 from itertools import chain, islice
 from random import sample
 
+from ecdsa import util
 from tlsfuzzer.runner import Runner
-from tlsfuzzer.messages import Connect, ClientHelloGenerator, \
-        ClientKeyExchangeGenerator, ChangeCipherSpecGenerator, \
-        FinishedGenerator, ApplicationDataGenerator, \
-        CertificateGenerator, CertificateVerifyGenerator, \
-        AlertGenerator, TCPBufferingEnable, TCPBufferingDisable, \
-        TCPBufferingFlush
-from tlsfuzzer.expect import ExpectServerHello, ExpectCertificate, \
-        ExpectServerHelloDone, ExpectChangeCipherSpec, ExpectFinished, \
-        ExpectAlert, ExpectClose, ExpectCertificateRequest, \
-        ExpectApplicationData, ExpectServerKeyExchange
-from tlslite.extensions import SignatureAlgorithmsExtension, \
-        SignatureAlgorithmsCertExtension, SupportedGroupsExtension, \
-        ECPointFormatsExtension
-from tlslite.constants import CipherSuite, AlertDescription, \
-        HashAlgorithm, SignatureAlgorithm, ExtensionType, GroupName, \
-        ECPointFormat, AlertLevel, AlertDescription, SignatureScheme
+from tlsfuzzer.messages import (
+    Connect,
+    ClientHelloGenerator,
+    ClientKeyExchangeGenerator,
+    ChangeCipherSpecGenerator,
+    FinishedGenerator,
+    ApplicationDataGenerator,
+    CertificateGenerator,
+    CertificateVerifyGenerator,
+    AlertGenerator,
+    TCPBufferingEnable,
+    TCPBufferingDisable,
+    TCPBufferingFlush,
+)
+from tlsfuzzer.expect import (
+    ExpectServerHello,
+    ExpectCertificate,
+    ExpectServerHelloDone,
+    ExpectChangeCipherSpec,
+    ExpectFinished,
+    ExpectAlert,
+    ExpectClose,
+    ExpectCertificateRequest,
+    ExpectApplicationData,
+    ExpectServerKeyExchange,
+)
+from tlslite.extensions import (
+    SignatureAlgorithmsExtension,
+    SignatureAlgorithmsCertExtension,
+    SupportedGroupsExtension,
+    ECPointFormatsExtension,
+)
+from tlslite.constants import (
+    CipherSuite,
+    AlertDescription,
+    HashAlgorithm,
+    SignatureAlgorithm,
+    ExtensionType,
+    GroupName,
+    ECPointFormat,
+    AlertLevel,
+    AlertDescription,
+    SignatureScheme,
+)
 from tlslite.utils.keyfactory import parsePEMKey
 from tlslite.x509 import X509
 from tlslite.x509certchain import X509CertChain
 from tlsfuzzer.utils.lists import natural_sort_keys
-from tlsfuzzer.helpers import RSA_SIG_ALL, ECDSA_SIG_ALL
+from tlsfuzzer.helpers import (
+    RSA_SIG_ALL,
+    ECDSA_SIG_ALL,
+    change_der_encoding_syntax_ecdsa_sig,
+)
 
 
 version = 1
@@ -42,22 +75,26 @@ def help_msg():
     print("                localhost by default")
     print(" -p port        port number to use for connection, 4433 by default")
     print(" probe-name     if present, will run only the probes with given")
-    print("                names and not all of them, e.g \"sanity\"")
+    print('                names and not all of them, e.g "sanity"')
     print(" -e probe-name  exclude the probe from the list of the ones run")
     print("                may be specified multiple times")
-    print(" -x probe-name  expect the probe to fail. When such probe passes despite being marked like this")
-    print("                it will be reported in the test summary and the whole script will fail.")
+    print(
+        " -x probe-name  expect the probe to fail. When such probe passes despite being marked like this"
+    )
+    print(
+        "                it will be reported in the test summary and the whole script will fail."
+    )
     print("                May be specified multiple times.")
     print(" -X message     expect the `message` substring in exception raised during")
     print("                execution of preceding expected failure probe")
     print("                usage: [-x probe-name] [-X exception], order is compulsory!")
     print(" -n num         run 'num' or all(if 0) tests instead of default(10)")
-    print("                (excluding \"sanity\" tests)")
+    print('                (excluding "sanity" tests)')
     print(" -k file.pem    file with private key for client")
     print(" -c file.pem    file with certificate for client")
     print(" -g kex         Key exchange groups to advertise in the supported_groups")
     print("                extension, separated by colons. By default:")
-    print("                \"secp256r1:secp384r1:secp521r1\"")
+    print('                "secp256r1:secp384r1:secp521r1"')
     print(" --help         this message")
 
 
@@ -76,36 +113,40 @@ def main():
     argv = sys.argv[1:]
     opts, args = getopt.getopt(argv, "h:p:e:x:X:n:k:c:g:", ["help"])
     for opt, arg in opts:
-        if opt == '-h':
+        if opt == "-h":
             host = arg
-        elif opt == '-p':
+        elif opt == "-p":
             port = int(arg)
-        elif opt == '-e':
+        elif opt == "-e":
             run_exclude.add(arg)
-        elif opt == '-x':
+        elif opt == "-x":
             expected_failures[arg] = None
             last_exp_tmp = str(arg)
-        elif opt == '-X':
+        elif opt == "-X":
             if not last_exp_tmp:
                 raise ValueError("-x has to be specified before -X")
             expected_failures[last_exp_tmp] = str(arg)
-        elif opt == '-n':
+        elif opt == "-n":
             num_limit = int(arg)
-        elif opt == '-g':
+        elif opt == "-g":
             vals = arg.split(":")
             groups = [getattr(GroupName, i) for i in vals]
-        elif opt == '--help':
+        elif opt == "--help":
             help_msg()
             sys.exit(0)
-        elif opt == '-k':
-            text_key = open(arg, 'rb').read()
+        elif opt == "-k":
+            text_key = open(arg, "rb").read()
             if sys.version_info[0] >= 3:
-                text_key = str(text_key, 'utf-8')
-            private_key = parsePEMKey(text_key, private=True)
-        elif opt == '-c':
-            text_cert = open(arg, 'rb').read()
+                text_key = str(text_key, "utf-8")
+            # For parsing PEM, the python implementation of keys is required,
+            # we need the interface of the python key.
+            private_key = parsePEMKey(
+                text_key, private=True, implementations=["python"]
+            )
+        elif opt == "-c":
+            text_cert = open(arg, "rb").read()
             if sys.version_info[0] >= 3:
-                text_cert = str(text_cert, 'utf-8')
+                text_cert = str(text_cert, "utf-8")
             cert = X509()
             cert.parse(text_cert)
         else:
@@ -122,26 +163,30 @@ def main():
         run_only = None
 
     if groups is None:
-        groups = [GroupName.secp256r1,
-                  GroupName.secp384r1,
-                  GroupName.secp521r1]
+        groups = [GroupName.secp256r1, GroupName.secp384r1, GroupName.secp521r1]
 
     conversations = {}
 
     # sanity check for Client Certificates
     conversation = Connect(host, port)
     node = conversation
-    ciphers = [CipherSuite.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
-               CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
-               CipherSuite.TLS_EMPTY_RENEGOTIATION_INFO_SCSV]
-    ext = {ExtensionType.signature_algorithms :
-           SignatureAlgorithmsExtension().create(ECDSA_SIG_ALL + RSA_SIG_ALL),
-           ExtensionType.signature_algorithms_cert :
-           SignatureAlgorithmsCertExtension().create(ECDSA_SIG_ALL + RSA_SIG_ALL),
-           ExtensionType.supported_groups :
-           SupportedGroupsExtension().create(groups),
-           ExtensionType.ec_point_formats :
-           ECPointFormatsExtension().create([ECPointFormat.uncompressed])}
+    ciphers = [
+        CipherSuite.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+        CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+        CipherSuite.TLS_EMPTY_RENEGOTIATION_INFO_SCSV,
+    ]
+    ext = {
+        ExtensionType.signature_algorithms: SignatureAlgorithmsExtension().create(
+            ECDSA_SIG_ALL + RSA_SIG_ALL
+        ),
+        ExtensionType.signature_algorithms_cert: SignatureAlgorithmsCertExtension().create(
+            ECDSA_SIG_ALL + RSA_SIG_ALL
+        ),
+        ExtensionType.supported_groups: SupportedGroupsExtension().create(groups),
+        ExtensionType.ec_point_formats: ECPointFormatsExtension().create(
+            [ECPointFormat.uncompressed]
+        ),
+    }
     node = node.add_child(ClientHelloGenerator(ciphers, extensions=ext))
     node = node.add_child(ExpectServerHello(version=(3, 3)))
     node = node.add_child(ExpectCertificate())
@@ -150,7 +195,14 @@ def main():
     node = node.add_child(ExpectServerHelloDone())
     node = node.add_child(CertificateGenerator(X509CertChain([cert])))
     node = node.add_child(ClientKeyExchangeGenerator())
-    node = node.add_child(CertificateVerifyGenerator(private_key, sig_encode=True))
+    node = node.add_child(
+        CertificateVerifyGenerator(
+            private_key,
+            sig_func=change_der_encoding_syntax_ecdsa_sig(
+                private_key.private_key.sign_digest_deterministic, util.sigencode_der
+            ),
+        )
+    )
     node = node.add_child(ChangeCipherSpecGenerator())
     node = node.add_child(FinishedGenerator())
     node = node.add_child(ExpectChangeCipherSpec())
@@ -164,6 +216,103 @@ def main():
 
     conversations["sanity"] = conversation
 
+    sig_encodings = {
+        "sig_encode ECDSA-Full-R with raw encoding": [
+            util.sigencode_der_full_r,
+            True,
+            None,
+            None,
+        ],
+        "sig_encode ECDSA-Full-R with uncompressed encoding": [
+            util.sigencode_der_full_r,
+            True,
+            "raw",
+            None,
+        ],
+        "sig_encode ECDSA-Full-R with compressed encoding": [
+            util.sigencode_der_full_r,
+            True,
+            "compressed",
+            None,
+        ],
+        "sig_encode ECDSA-Full-R with hybrid encoding": [
+            util.sigencode_der_full_r,
+            True,
+            "hybrid",
+            None,
+        ],
+        "sig_encode ECDSA-Sig-Value with y as field element": [
+            util.sigencode_der_sig_value_y_field_elem,
+            True,
+            None,
+            None,
+        ],
+        "sig_encode ECDSA-Sig-Value with y as boolean": [
+            util.sigencode_der_sig_value_y_boolean,
+            True,
+            None,
+            None,
+        ],
+        "sig_encode ECDSA-Sig-Value with a": [
+            util.sigencode_der_sig_value_a,
+            False,
+            None,
+            1,
+        ],
+    }
+    for key, values in sig_encodings.items():
+        sig_encode, accelerate, encoding, a_param = values
+        conversation = Connect(host, port)
+        node = conversation
+        ciphers = [
+            CipherSuite.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+            CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+            CipherSuite.TLS_EMPTY_RENEGOTIATION_INFO_SCSV,
+        ]
+        ext = {
+            ExtensionType.signature_algorithms: SignatureAlgorithmsExtension().create(
+                ECDSA_SIG_ALL + RSA_SIG_ALL
+            ),
+            ExtensionType.signature_algorithms_cert: SignatureAlgorithmsCertExtension().create(
+                ECDSA_SIG_ALL + RSA_SIG_ALL
+            ),
+            ExtensionType.supported_groups: SupportedGroupsExtension().create(groups),
+            ExtensionType.ec_point_formats: ECPointFormatsExtension().create(
+                [
+                    ECPointFormat.uncompressed,
+                    ECPointFormat.ansiX962_compressed_char2,
+                    ECPointFormat.ansiX962_compressed_prime,
+                ]
+            ),
+        }
+        node = node.add_child(ClientHelloGenerator(ciphers, extensions=ext))
+        node = node.add_child(ExpectServerHello(version=(3, 3)))
+        node = node.add_child(ExpectCertificate())
+        node = node.add_child(ExpectServerKeyExchange())
+        node = node.add_child(ExpectCertificateRequest())
+        node = node.add_child(ExpectServerHelloDone())
+        node = node.add_child(CertificateGenerator(X509CertChain([cert])))
+        node = node.add_child(ClientKeyExchangeGenerator())
+        node = node.add_child(
+            CertificateVerifyGenerator(
+                private_key,
+                sig_func=change_der_encoding_syntax_ecdsa_sig(
+                    private_key.private_key.sign_digest_deterministic,
+                    sig_encode=sig_encode,
+                    accelerate=accelerate,
+                    encoding=encoding,
+                    a_param=a_param,
+                ),
+            )
+        )
+        node = node.add_child(ChangeCipherSpecGenerator())
+        node = node.add_child(
+            ExpectAlert(AlertLevel.fatal, AlertDescription.decrypt_error)
+        )
+        node = node.add_child(ExpectClose())
+
+        conversations[key] = conversation
+
     # run the conversation
     good = 0
     bad = 0
@@ -176,20 +325,26 @@ def main():
 
     # make sure that sanity test is run first and last
     # to verify that server was running and kept running throught
-    sanity_tests = [('sanity', conversations['sanity'])]
+    sanity_tests = [("sanity", conversations["sanity"])]
     run_sanity = True
     if run_only:
-        if len(run_only) == 1 and 'sanity' in run_only:
+        if len(run_only) == 1 and "sanity" in run_only:
             run_sanity = False
             regular_tests = sanity_tests
         else:
-            if not 'sanity' in run_only:
+            if not "sanity" in run_only:
                 run_sanity = False
-            regular_tests = [(k, v) for k, v in conversations.items() if
-                             k in run_only and (k != 'sanity')]
+            regular_tests = [
+                (k, v)
+                for k, v in conversations.items()
+                if k in run_only and (k != "sanity")
+            ]
     else:
-        regular_tests = [(k, v) for k, v in conversations.items() if
-                         (k != 'sanity') and k not in run_exclude]
+        regular_tests = [
+            (k, v)
+            for k, v in conversations.items()
+            if (k != "sanity") and k not in run_exclude
+        ]
     sampled_tests = sample(regular_tests, min(num_limit, len(regular_tests)))
     if run_sanity:
         ordered_tests = chain(sanity_tests, sampled_tests, sanity_tests)
@@ -217,12 +372,16 @@ def main():
                 xpassed.append(c_name)
                 print("XPASS-expected failure but test passed\n")
             else:
-                if expected_failures[c_name] is not None and  \
-                    expected_failures[c_name] not in str(exception):
-                        bad += 1
-                        failed.append(c_name)
-                        print("Expected error message: {0}\n"
-                            .format(expected_failures[c_name]))
+                if expected_failures[c_name] is not None and expected_failures[
+                    c_name
+                ] not in str(exception):
+                    bad += 1
+                    failed.append(c_name)
+                    print(
+                        "Expected error message: {0}\n".format(
+                            expected_failures[c_name]
+                        )
+                    )
                 else:
                     xfail += 1
                     print("OK-expected failure\n")
@@ -237,9 +396,9 @@ def main():
     print("Test malformed ecdsa signature in Certificate Verify\n")
 
     print("Test end")
-    print(20 * '=')
+    print(20 * "=")
     print("version: {0}".format(version))
-    print(20 * '=')
+    print(20 * "=")
     if run_sanity:
         print("TOTAL: {0}".format(len(sampled_tests) + 2 * len(sanity_tests)))
     else:
@@ -249,16 +408,17 @@ def main():
     print("XFAIL: {0}".format(xfail))
     print("FAIL: {0}".format(bad))
     print("XPASS: {0}".format(xpass))
-    print(20 * '=')
-    sort = sorted(xpassed ,key=natural_sort_keys)
+    print(20 * "=")
+    sort = sorted(xpassed, key=natural_sort_keys)
     if len(sort):
-        print("XPASSED:\n\t{0}".format('\n\t'.join(repr(i) for i in sort)))
+        print("XPASSED:\n\t{0}".format("\n\t".join(repr(i) for i in sort)))
     sort = sorted(failed, key=natural_sort_keys)
     if len(sort):
-        print("FAILED:\n\t{0}".format('\n\t'.join(repr(i) for i in sort)))
+        print("FAILED:\n\t{0}".format("\n\t".join(repr(i) for i in sort)))
 
     if bad or xpass:
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
