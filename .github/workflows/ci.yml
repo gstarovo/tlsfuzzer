@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - master
+      - wip_dc_mr_comments
   pull_request:
 jobs:
   test:
