@@ -724,7 +724,7 @@ class TestPlots(unittest.TestCase):
             'B': [0.000758130, 0.000696718, 0.000980080, 0.000988899, 0.000875510,
                 0.000734843, 0.000754852, 0.000667378, 0.000671230, 0.000790935]
         }
-        timings = pd.DataFrame(data=data)
+        timings = pd.DataFrame(data=data, copy=False)
         mock_read_csv = mock.Mock()
         mock_read_csv.return_value = timings
         with mock.patch("tlsfuzzer.analysis.Analysis.load_data", mock_read_csv):
